@@ -1,5 +1,5 @@
-import Common.{mockActionRead, mockActionRead2, testDeck, testGame, testPlayers}
-import Suit.{Hearts, Spades}
+import Common.{mockActionRead, mockActionRead2, testGame}
+import Suit.{Clubs, Hearts, Spades}
 import munit.FunSuite
 
 
@@ -17,6 +17,12 @@ class GameTests extends FunSuite {
     assert(testGame.players.forall(_.stack == 500))
     assertEquals(testGame.bigBlind, 10)
     assertEquals(testGame.smallBlind, 5)
+  }
+
+  test("Add card to community") {
+    val (g, _) = Game.addCardsToCommunity(2).run(testGame).value
+    assertEquals(g.communityCards, Seq(Card(Clubs, 1), Card(Spades, 2)))
+    assertEquals(g.deck.cards.length, 40)
   }
 
   test("Pay blinds") {

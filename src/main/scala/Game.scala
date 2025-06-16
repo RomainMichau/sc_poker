@@ -1,3 +1,4 @@
+import Game.Phase.{Flop, PreFlop}
 import cats.data.{NonEmptySeq, State}
 
 type PlayerName = String
@@ -55,6 +56,24 @@ object Game {
     _ <- payToPot(1, g.bigBlind)
   } yield ()
 
+
+  def addCardsToCommunity(nbCards: Int): State[Game, Unit] = {
+    def loop(n: Int): State[Game, Unit] = {
+      if (n <= 0) State.pure(())
+      else for {
+        game <- State.get[Game]
+        (newDeck, card) = game.deck.pickCard()
+        _ <- State.modify[Game](_.copy(
+          deck = newDeck,
+          communityCards = game.communityCards :+ card
+        ))
+        _ <- loop(n - 1)
+      } yield ()
+    }
+
+    loop(nbCards)
+  }
+
   private def payToPot(playerId: Int, amount: Int): State[Game, Unit] = {
     State.modify { g =>
       val player = g.players(playerId).updateStack(_ - amount).updateBet(_ + amount)
@@ -63,6 +82,30 @@ object Game {
       g.copy(players = nplayers, pot = g.pot.updated(playerId, cAmount + amount))
     }
   }
+
+  def play()(using actionReader: ActionReader): State[Game, Unit] = {
+    for {
+      _ <- playPhase(PreFlop)
+      _ <- playPhase(Flop)
+    } yield ()
+  }
+  
+  def playPhase(phase: Phase)(using actionReader: ActionReader): State[Game, Unit] = {
+    phase match {
+      case PreFlop => for {
+        _ <- Game.payBlinds()
+        g <- State.get
+        _ <- Game.playPhaseTurns(TurnAccounting.initWithBlind(g), true)
+      } yield ()
+      case Flop => for {
+        _ <- Game.addCardsToCommunity(3)
+        _ <- UI.printGame2()
+        g <- State.get
+        _ <- Game.playPhaseTurns(TurnAccounting.empty(g))
+      } yield ()
+    }
+  }
+
 
   def playPhaseTurns(turn: TurnAccounting, skipBlinds: Boolean = false)(using actionReader: ActionReader): State[Game, TurnAccounting] = {
     for {
