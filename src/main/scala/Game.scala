@@ -1,0 +1,132 @@
+import cats.data.{NonEmptySeq, State}
+
+type PlayerName = String
+type PlayerId = Int
+
+trait ActionReader {
+  def apply(ask: String = ""): String
+}
+
+case class Player(id: PlayerId, name: PlayerName, hand: (Card, Card), stack: Int, totalBet: Int, isFold: Boolean = false) {
+  def updateStack(op: Int => Int): Player = this.copy(stack = op(stack))
+  def updateBet(op: Int => Int): Player = this.copy(totalBet = op(totalBet))
+}
+
+object TurnAccounting {
+  def empty(game: Game): TurnAccounting = TurnAccounting(game.players.map(_.id -> 0).toMap)
+
+  def initWithBlind(game: Game): TurnAccounting = {
+    val playersBet = game.players.map(_.id -> 0).toMap
+      .updated(0, game.smallBlind)
+      .updated(1, game.bigBlind)
+    TurnAccounting(playersBet)
+  }
+}
+
+case class TurnAccounting(playerBets: Map[PlayerId, Int]) {
+  def highestBet = playerBets.values.max
+
+  def getPlayerCall(player: PlayerId): Int = highestBet - playerBets(player)
+
+  def registerBet(player: PlayerId, bet: Int): TurnAccounting = {
+    val newPlayerBet = playerBets(player) + bet
+    this.copy(playerBets = playerBets.updated(player, newPlayerBet))
+  }
+
+  def playerIsDone(playerId: PlayerId): Boolean = playerBets(playerId) == highestBet
+}
+
+
+object Game {
+
+  def newGame(deck: Deck, playerNames: Seq[PlayerName], startStack: Int, bigBlind: Int, smallBlind: Int): Game = {
+    val (hands, ndeck) = deck.dealHands(playerNames.length)
+    val players = playerNames.zip(hands).zipWithIndex.map { case ((name, hand), id) => Player(id, name, hand, startStack, 0) }
+    Game(ndeck, players, Seq.empty, bigBlind, smallBlind, players.map(_.id -> 0).toMap)
+  }
+
+  enum Phase {
+    case PreFlop, Flop, Turn, River
+  }
+
+  def payBlinds(): State[Game, Unit] = for {
+    g <- State.get
+    _ <- payToPot(0, g.smallBlind)
+    _ <- payToPot(1, g.bigBlind)
+  } yield ()
+
+  private def payToPot(playerId: Int, amount: Int): State[Game, Unit] = {
+    State.modify { g =>
+      val player = g.players(playerId).updateStack(_ - amount).updateBet(_ + amount)
+      val nplayers = g.players.updated(playerId, player)
+      val cAmount = g.pot(playerId)
+      g.copy(players = nplayers, pot = g.pot.updated(playerId, cAmount + amount))
+    }
+  }
+
+  def playPhaseTurns(turn: TurnAccounting, skipBlinds: Boolean = false)(using actionReader: ActionReader): State[Game, TurnAccounting] = {
+    for {
+      _ <- UI.printGame2()
+      nturn <- playTurn(turn, skipBlinds)
+      game <- State.get[Game]
+      nturn2 <- if (game.nonFoldedPlayer.forall(p => nturn.playerIsDone(p.id)))
+        State.pure(nturn)
+      else
+        playPhaseTurns(nturn)
+
+    } yield (nturn2)
+  }
+
+  def playTurn(turn: TurnAccounting, skipBlinds: Boolean = false)(using actionReader: ActionReader): State[Game, TurnAccounting] = {
+    for {
+      game <- State.get[Game]
+      players = if (!skipBlinds) game.nonFoldedPlayer else game.players.drop(2).filterNot(_.isFold)
+      finalTurn <- players.foldLeft(State.pure[Game, TurnAccounting](turn)) {
+        (accState, player) =>
+          accState.flatMap(currentTurn => playerMove(player, currentTurn))
+      }
+    } yield finalTurn
+  }
+
+  def playerMove(player: Player, turn: TurnAccounting)(using actionReader: ActionReader): State[Game, TurnAccounting] = {
+    val callAmount = turn.getPlayerCall(player.id)
+    println(s"${player.name} Next move: [1 Fold] [2 Call $callAmount] [3 Raise]\n") // Fixed typo (you had 2 "Fold")
+
+    val action = Action.readAction()
+
+    val res = action match {
+      case Fold() =>
+        for {
+          _ <- State.modify[Game](g => g.foldPlayer(player.id))
+        } yield turn
+
+      case Call() =>
+        for {
+          _ <- Game.payToPot(player.id, callAmount) // <-- modifies state
+        } yield turn.registerBet(player.id, callAmount)
+
+      case Raise(amount) =>
+        for {
+          _ <- Game.payToPot(player.id, amount)
+        } yield turn.registerBet(player.id, amount)
+    }
+    for {
+      r <- res
+      _ <- UI.printGame2()
+    } yield r
+  }
+}
+
+
+case class Game(deck: Deck, players: Seq[Player], communityCards: Seq[Card],
+                bigBlind: Int, smallBlind: Int, pot: Map[PlayerId, Int]) {
+  def potTotal: Int = pot.map((_, v) => v).sum
+
+  def foldPlayer(playerId: PlayerId): Game = {
+    val player = players(playerId).copy(isFold = true)
+    this.copy(players = players.updated(playerId, player))
+  }
+
+  def nonFoldedPlayer: Seq[Player] = this.players.filterNot(_.isFold)
+
+}
