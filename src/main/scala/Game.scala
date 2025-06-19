@@ -1,4 +1,5 @@
-import Game.Phase.{Flop, PreFlop}
+import Game.Phase
+import Game.Phase.{Flop, PreFlop, River, Turn}
 import cats.data.{NonEmptySeq, State}
 
 type PlayerName = String
@@ -87,18 +88,30 @@ object Game {
     for {
       _ <- playPhase(PreFlop)
       _ <- playPhase(Flop)
+      _ <- playPhase(Turn)
+      _ <- playPhase(River)
     } yield ()
   }
   
   def playPhase(phase: Phase)(using actionReader: ActionReader): State[Game, Unit] = {
     phase match {
       case PreFlop => for {
+        _ <- State.modify[Game](g => g.setPhase(phase))
         _ <- Game.payBlinds()
         g <- State.get
         _ <- Game.playPhaseTurns(TurnAccounting.initWithBlind(g), true)
       } yield ()
+
       case Flop => for {
+        _ <- State.modify[Game](g => g.setPhase(phase))
         _ <- Game.addCardsToCommunity(3)
+        _ <- UI.printGame2()
+        g <- State.get
+        _ <- Game.playPhaseTurns(TurnAccounting.empty(g))
+      } yield ()
+      case Turn | River => for {
+        _ <- State.modify[Game](g => g.setPhase(phase))
+        _ <- Game.addCardsToCommunity(1)
         _ <- UI.printGame2()
         g <- State.get
         _ <- Game.playPhaseTurns(TurnAccounting.empty(g))
@@ -113,7 +126,7 @@ object Game {
       nturn <- playTurn(turn, skipBlinds)
       game <- State.get[Game]
       nturn2 <- if (game.nonFoldedPlayer.forall(p => nturn.playerIsDone(p.id)))
-        State.pure(nturn)
+        State.pure[Game, TurnAccounting](nturn)
       else
         playPhaseTurns(nturn)
 
@@ -131,38 +144,63 @@ object Game {
     } yield finalTurn
   }
 
+//  def playerMove(player: Player, turn: TurnAccounting)(using actionReader: ActionReader): State[Game, TurnAccounting] = {
+//    val callAmount = turn.getPlayerCall(player.id)
+//    println(s"${player.name} Next move: [1 Fold] [2 Call $callAmount] [3 Raise]\n") // Fixed typo (you had 2 "Fold")
+//
+//    val action = Action.readAction()
+//
+//    val print = for {
+//      _ <- UI.printGame2(Some(player.id))
+//    } yield ()
+//
+//    val res = action match {
+//      case Fold() =>
+//        for {
+//          _ <- State.modify[Game](g => g.foldPlayer(player.id))
+//        } yield turn
+//
+//      case Call() =>
+//        for {
+//          _ <- Game.payToPot(player.id, callAmount) // <-- modifies state
+//        } yield turn.registerBet(player.id, callAmount)
+//
+//      case Raise(amount) =>
+//        for {
+//          _ <- Game.payToPot(player.id, amount)
+//        } yield turn.registerBet(player.id, amount)
+//    }
+//    print.flatMap(_ => res)
+//  }
+
   def playerMove(player: Player, turn: TurnAccounting)(using actionReader: ActionReader): State[Game, TurnAccounting] = {
     val callAmount = turn.getPlayerCall(player.id)
-    println(s"${player.name} Next move: [1 Fold] [2 Call $callAmount] [3 Raise]\n") // Fixed typo (you had 2 "Fold")
 
-    val action = Action.readAction()
-
-    val res = action match {
-      case Fold() =>
-        for {
-          _ <- State.modify[Game](g => g.foldPlayer(player.id))
-        } yield turn
-
-      case Call() =>
-        for {
-          _ <- Game.payToPot(player.id, callAmount) // <-- modifies state
-        } yield turn.registerBet(player.id, callAmount)
-
-      case Raise(amount) =>
-        for {
-          _ <- Game.payToPot(player.id, amount)
-        } yield turn.registerBet(player.id, amount)
-    }
     for {
-      r <- res
-      _ <- UI.printGame2()
-    } yield r
+      _ <- UI.printGame2(Some(player.id)) // 👈 print game BEFORE asking
+
+        _ <- State.inspect[Game, Unit] { game =>
+            println(s"${player.name} Next move: [1 Fold] [2 Call $callAmount] [3 Raise]")}
+      action <- State.pure(Action.readAction()) // 👈 delay user input until after printing
+
+      updatedTurn <- action match {
+        case Fold() =>
+          State.modify[Game](_.foldPlayer(player.id)).map(_ => turn)
+
+        case Call() =>
+          Game.payToPot(player.id, callAmount).map(_ => turn.registerBet(player.id, callAmount))
+
+        case Raise(amount) =>
+          Game.payToPot(player.id, amount).map(_ => turn.registerBet(player.id, amount))
+      }
+    } yield updatedTurn
   }
+
 }
 
 
 case class Game(deck: Deck, players: Seq[Player], communityCards: Seq[Card],
-                bigBlind: Int, smallBlind: Int, pot: Map[PlayerId, Int]) {
+                bigBlind: Int, smallBlind: Int, pot: Map[PlayerId, Int], phase: Phase = PreFlop) {
   def potTotal: Int = pot.map((_, v) => v).sum
 
   def foldPlayer(playerId: PlayerId): Game = {
@@ -171,5 +209,7 @@ case class Game(deck: Deck, players: Seq[Player], communityCards: Seq[Card],
   }
 
   def nonFoldedPlayer: Seq[Player] = this.players.filterNot(_.isFold)
+
+  def setPhase(phase: Phase): Game = this.copy(phase = phase)
 
 }
