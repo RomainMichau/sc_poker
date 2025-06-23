@@ -1,5 +1,6 @@
 import Common.testDeck
-import Suit.{Clubs, Diamonds, Hearts, Spades}
+import com.rmichau.sc_poker.core_game.{Card, CardStringContext, Deck}
+import com.rmichau.sc_poker.core_game.Suit.{Clubs, Diamonds, Hearts, Spades}
 import munit.FunSuite
 
 class DeckTests extends FunSuite {
@@ -35,6 +36,17 @@ class DeckTests extends FunSuite {
       Card(Clubs, 10)))
     assertEquals(hands, expectedHands)
     assertEquals(deck.cards.size, 52 - 6)
+  }
+
+  test("String interpolation") {
+    assertEquals(c"3♠", Card(Spades, 3))
+    assertEquals(c"3S", Card(Spades, 3))
+    assertEquals(c"12♥", Card(Hearts, 12))
+    assertEquals(c"12H", Card(Hearts, 12))
+    intercept[IllegalArgumentException](c"12bro")
+    intercept[IllegalArgumentException](c"12")
+    intercept[IllegalArgumentException](c"123♥")
+    intercept[IllegalArgumentException](c"0♥")
   }
 }
 

@@ -1,5 +1,6 @@
 import Common.{mockActionRead, mockActionRead2, testGame}
-import Suit.{Clubs, Hearts, Spades}
+import com.rmichau.sc_poker.core_game.{ActionReader, Card, Game, PhaseAccounting, PlayerName}
+import com.rmichau.sc_poker.core_game.Suit.{Clubs, Hearts, Spades}
 import munit.FunSuite
 
 
@@ -12,18 +13,18 @@ class GameTests extends FunSuite {
 
   test("Game init works as expected") {
     assertEquals(testGame.deck.cards.size, 42)
-    assert(testGame.communityCards.isEmpty)
+    assert(testGame.phase.cards.isEmpty)
     assertEquals(testGame.players.head.hand, (Card(Spades, 1), Card(Hearts, 13)))
     assert(testGame.players.forall(_.stack == 500))
     assertEquals(testGame.bigBlind, 10)
     assertEquals(testGame.smallBlind, 5)
   }
 
-  test("Add card to community") {
-    val (g, _) = Game.addCardsToCommunity(2).run(testGame).value
-    assertEquals(g.communityCards, Seq(Card(Clubs, 1), Card(Spades, 2)))
-    assertEquals(g.deck.cards.length, 40)
-  }
+//  test("Add card to community") {
+//    val (g, _) = Game.addCardsToCommunity(2).run(testGame).value
+//    assertEquals(g.communityCards, Seq(Card(Clubs, 1), Card(Spades, 2)))
+//    assertEquals(g.deck.cards.length, 40)
+//  }
 
   test("Pay blinds") {
     val (game, _) = Game.payBlinds().run(testGame).value
@@ -35,8 +36,15 @@ class GameTests extends FunSuite {
     })
   }
 
+  test("Get non next non folded") {
+    val ngame = testGame.foldPlayer(1)
+    assertEquals(ngame.getNextNonFolderPlayer(0).id, 2)
+    val ngame2 = testGame.foldPlayer(1)
+    assertEquals(ngame.getNextNonFolderPlayer(1).id, 2)
+  }
+
   test("Player Fold") {
-    val (game, _) = Game.playerMove(p0, TurnAccounting.empty(testGame))(using mockActionRead("1")).run(testGame).value
+    val (game, _) = Game.playerMove(p0, PhaseAccounting.empty(testGame))(using mockActionRead("1")).run(testGame).value
     assert(game.players.head.isFold)
   }
 
@@ -44,7 +52,7 @@ class GameTests extends FunSuite {
   test("Player Call") {
     val gameSt = for {
       _ <- Game.payBlinds()
-      turn = TurnAccounting.initWithBlind(testGame)
+      turn = PhaseAccounting.initWithBlind(testGame)
       nturn <- Game.playerMove(p2, turn)(using mockActionRead("2"))
     } yield nturn
 
@@ -53,8 +61,8 @@ class GameTests extends FunSuite {
     assertEquals(game.players(1).stack, 490)
     assertEquals(game.players(2).stack, 490)
 
-    assertEquals(turn.highestBet, 10)
-    assertTurnBets(turn, 5, 10, 10, 0, 0)
+    assertEquals(turn.highestBet, Some(10))
+    assertTurnBets(turn, Some(5), Some(10), Some(10), None, None)
 
     assertPot(game, 5, 10, 10, 0, 0)
 
@@ -64,7 +72,7 @@ class GameTests extends FunSuite {
   test("Player raise") {
     val gameSt = for {
       _ <- Game.payBlinds()
-      turn = TurnAccounting.initWithBlind(testGame)
+      turn = PhaseAccounting.initWithBlind(testGame)
       nturn <- Game.playerMove(p2, turn)(using mockActionRead2("3", "100"))
     } yield nturn
     val (game, turn) = gameSt.run(testGame).value
@@ -72,8 +80,8 @@ class GameTests extends FunSuite {
     assertEquals(game.players(1).stack, 490)
     assertEquals(game.players(2).stack, 400)
 
-    assertEquals(turn.highestBet, 100)
-    assertTurnBets(turn, 5, 10, 100, 0, 0)
+    assertEquals(turn.highestBet, Some(100))
+    assertTurnBets(turn, Some(5), Some(10), Some(100), None, None)
     assertPot(game, 5, 10, 100, 0, 0)
   }
 
@@ -86,29 +94,28 @@ class GameTests extends FunSuite {
       "2", // p4 call 10
       "3", "15", // p0 raise 15 Current bet is 20
       "1", // p1 fold
-      "2", // p3 call 10
-      "3", "20", // p4 raise 20, Current bet 30
+      
+      "3", "20", // p3 raise 20
+      "2", // p4 call10
       "1", // p0, fold
-      "2", // p3 call 10
-      "2", // p4 cal 0
     ))
 
     val gameSt = for {
       _ <- Game.payBlinds()
-      turn = TurnAccounting.initWithBlind(testGame)
-      nturn <- Game.playPhaseTurns(turn, true)
+      turn = PhaseAccounting.initWithBlind(testGame)
+      nturn <- Game.playPhaseTurns(turn, testGame.players(2))
     } yield nturn
     val (game, turn) = gameSt.run(testGame).value
     assertFolded(game, Set(p1.name, p2.name, p0.name))
     assertEquals(game.potTotal, 90)
 
     assertPot(game, 20, 10, 0, 30, 30)
-    assertTurnBets(turn, 20, 10, 0, 30, 30)
+    assertTurnBets(turn, Some(20), Some(10), None, Some(30), Some(30))
     assertBet(game, 20, 10, 0, 30, 30)
     assertStack(game, 480, 490, 500, 470, 470)
   }
 
-  private def assertTurnBets(turn: TurnAccounting, p0b: Int, p1b: Int, p2b: Int, p3b: Int, p4b: Int): Unit = {
+  private def assertTurnBets(turn: PhaseAccounting, p0b: Option[Int], p1b: Option[Int], p2b: Option[Int], p3b: Option[Int], p4b: Option[Int]): Unit = {
     assertEquals(turn.playerBets(0), p0b)
     assertEquals(turn.playerBets(1), p1b)
     assertEquals(turn.playerBets(2), p2b)

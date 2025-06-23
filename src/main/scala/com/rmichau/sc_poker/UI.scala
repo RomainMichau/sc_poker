@@ -1,4 +1,7 @@
+package com.rmichau.sc_poker
+
 import cats.data.State
+import com.rmichau.sc_poker.core_game.{Game, PlayerId}
 
 object UI {
 
@@ -15,33 +18,12 @@ object UI {
       val res =
         s"""
            |==========POKER=========
-           |${game.phase}
-           |Pot: ${game.potTotal}   Community Cards: ${game.communityCards.mkString(" | ")}
+           |${game.phase.name}
+           |Pot: ${game.potTotal}   Community Cards: ${game.phase.cards.mkString(" | ")}
            |
            |$players
            |""".stripMargin
       println(res)
     }
   } yield ()
-
-  //    val communityStr = state.communityCards.map(_.toString).mkString(" ")
-//    val playersStr = state.players.zipWithIndex.map { case (p, i) =>
-//      val cardsStr = p.hand.toString()
-////      val activeMarker = if (i == state.currentPlayer) " <-- Your move" else ""
-//
-//      f"${p.name}%-10s Stack: ${p.stack}%4d  $cardsStr"
-//    }.mkString("\n")
-//
-//    val res = s"""
-//       |=== POKER GAME ===
-//       |
-//       |Pot: ${state.pot}
-//       |Community Cards: $communityStr
-//       |
-//       |$playersStr
-//       |""".stripMargin
-//    println(res)
-//  }
-
-
 }

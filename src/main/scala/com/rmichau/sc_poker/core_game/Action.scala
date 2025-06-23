@@ -1,3 +1,6 @@
+package com.rmichau.sc_poker.core_game
+
+import com.rmichau.sc_poker.core_game.ActionReader
 
 object Action {
 
